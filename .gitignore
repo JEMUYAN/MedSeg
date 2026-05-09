@@ -1,0 +1,76 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+.venv
+env/
+venv/
+rag_index/
+*.bin
+*.npy
+*.json
+!config.json
+.DS_Store
+
+# ------------------------------------------------------------
+# resource/ 中的非源码产物（媒体/权重/二进制/构建产物等）
+# 目标：保留源码与必要的文本配置，忽略示例素材、数据与大文件。
+# ------------------------------------------------------------
+
+# Media assets
+resource/**/*.png
+resource/**/*.jpg
+resource/**/*.jpeg
+resource/**/*.gif
+resource/**/*.webp
+resource/**/*.bmp
+resource/**/*.tif
+resource/**/*.tiff
+resource/**/*.mp4
+resource/**/*.mov
+resource/**/*.avi
+resource/**/*.mkv
+
+# Model checkpoints / weights
+resource/**/*.pt
+resource/**/*.pth
+resource/**/*.ckpt
+resource/**/*.safetensors
+resource/**/*.onnx
+resource/**/*.tflite
+
+# Binary artifacts / caches
+resource/**/*.so
+resource/**/*.dylib
+resource/**/*.dll
+resource/**/*.pyd
+resource/**/*.o
+resource/**/*.a
+resource/**/*.lib
+resource/**/*.obj
+
+# Common build output folders inside vendored repos
+resource/**/build/
+resource/**/dist/
+resource/**/.venv/
+resource/**/venv/

@@ -1,0 +1,98 @@
+# MedSeg
+
+本仓库提供一个面向“检索增强分割”的最小工程化实现：输入待测图片，通过 RAG 系统检索 Top-k 相似样例（带专家标注掩码），将这些样例写入 SAM3 的 memory bank，并在锁定 memory bank 后对目标帧进行分割，输出二值掩码图像文件。
+
+## 功能概览
+
+- RAG 检索（DINOv3 embedding + FAISS）：输入查询图片路径，返回 Top-k `[(img_path, mask_path, distance), ...]`
+- SAM3 记忆注意力分割：把 Top-k 样例作为“条件帧”写入 memory bank，把待测图片作为“目标帧”推理并输出掩码
+- memory bank 锁定：Top-k 写入完成后对目标帧推理禁用 memory encoder（语义等价 `run_mem_encoder=False`），避免记忆被目标帧污染
+- 产物输出：`*_mask.png`（单通道 8-bit，0/255）与对应的 `*.json` 元信息
+
+## 目录结构
+
+- `rag/`：检索系统实现（embedding、索引、mask 元数据存储）
+- `seg_pipeline/`：分割流水线（输入校验、RAG 对接、SAM3 适配、输出落盘）
+- `resource/sam3/`：SAM3 源码与文档（上游工程内置）
+- `resource/dinov3/`、`resource/faiss/`：上游依赖源码（供参考/对照）
+- `segment.md`：分割需求说明
+- `rag.md`：RAG 需求说明
+- `.trae/specs/`：spec-driven 开发产物（spec/tasks/checklist）
+
+## 关键接口
+
+### RAG：检索 Top-k
+
+入口类：`rag.rag_system.RAGSystem`
+
+- `search(query_image: str, k: int=None) -> List[Tuple[str, str, float]]`
+  - 返回：`[(img_path, mask_path, distance), ...]`
+  - `mask_path` 可能为空字符串（未配置对应 mask）
+
+RAG 也提供索引维护接口：`index_images` / `add_image` / `remove_image` / `clear_index`。
+
+### 分割流水线：segment_image
+
+入口函数：`seg_pipeline.segment_image`
+
+```python
+from seg_pipeline import segment_image
+from seg_pipeline.sam3_memory_segmenter import Sam3BuildConfig
+
+result = segment_image(
+    query_image_path="/abs/path/query.png",
+    k=5,  # 或者直接传 retrieval_topk=[(...), ...]
+    sam3_build_config=Sam3BuildConfig(
+        version="sam3.1",  # "sam3" 或 "sam3.1"
+        checkpoint_path="/abs/path/ckpt.pt",  # 可选；不填则由 SAM3 builder 自行处理
+        bpe_path=None,
+    ),
+    output_prob_thresh=0.5,  # 二值化阈值（概率）
+    lock_memory=True,  # Top-k 写入后锁定 memory bank（推荐）
+)
+
+print(result.output_mask_path)  # 例如 .../outputs/query_mask.png
+print(result.meta_path)         # 例如 .../outputs/query_mask.png.json
+```
+
+#### retrieval_topk 支持的输入格式
+
+`retrieval_topk` 可传入以下任意一种（可混用）：
+
+- RAG tuple：`[(img_path, mask_path, distance), ...]`
+- dict 列表：例如 `{"image_path": "...", "mask_path": "...", "distance": 1.2, "score": 0.9}`
+- `seg_pipeline.protocol.RetrievalItem` 列表
+
+缺失字段、mask 不存在等会被记录到 meta 的 `retrieval.skipped`，并按“跳过条目”降级处理。
+
+## SAM3 memory bank 机制与锁定策略
+
+SAM3 在单张图片模式下默认不会启用记忆注意力。`seg_pipeline` 的做法是：
+
+1. 将 Top-k 样例图像 + 待测图像“物化”为一个仅包含 `0.jpg..N.jpg` 的目录，作为“合成视频帧序列”
+2. 对 Top-k 帧逐帧 `add_new_mask` 写入专家掩码，调用 `propagate_in_video_preflight(run_mem_encoder=True)` 将这些条件帧编码进 memory bank
+3. 对目标帧推理时，若 `lock_memory=True`，则以 `run_mem_encoder=False` 传播，确保 memory bank 在目标帧阶段保持只读
+
+## 依赖
+
+- 根目录 `requirements.txt`：分割流水线 + SAM3 基础依赖 + 引用 `rag/requirements.txt`
+- `rag/requirements.txt`：RAG 侧依赖（torch/transformers/faiss/Pillow 等）
+
+说明：本仓库同时包含上游源码（`resource/sam3` 等），可按需要选择“源码引用”或“pip 安装”方式使用；当前 `seg_pipeline` 默认在导入失败时将 `resource/sam3` 临时加入 `sys.path` 以便直接使用本地源码。
+
+## 测试（静态验证）
+
+测试仅覆盖协议解析、RAG 适配、以及 memory bank 锁定参数传递（使用 mock/stub，避免加载模型权重与端到端推理）。
+
+- `tests/test_protocol_parsing.py`
+- `tests/test_rag_integration.py`
+- `tests/test_memory_lock_passing.py`
+
+为避免误收集 `resource/` 下的上游测试，已通过 `pytest.ini` 将收集范围限定到 `tests/`。
+
+## 设计约束
+
+- 输出掩码为 PNG 单通道 8-bit（0/255）
+- Top-k 样例必须同时具备图像与对应专家 mask（mask 缺失条目会被跳过）
+- 默认启用 memory bank 锁定（`lock_memory=True`），以保证检索记忆不被目标帧更新污染
+

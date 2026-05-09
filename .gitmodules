@@ -1,0 +1,9 @@
+[submodule "resource/sam3"]
+	path = resource/sam3
+	url = https://github.com/facebookresearch/sam3.git
+[submodule "resource/dinov3"]
+	path = resource/dinov3
+	url = https://github.com/facebookresearch/dinov3.git
+[submodule "resource/faiss"]
+	path = resource/faiss
+	url = https://github.com/facebookresearch/faiss.git
