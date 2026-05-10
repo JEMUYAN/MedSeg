@@ -9,13 +9,23 @@ from rag.config import DINOV3_MODEL_NAME, EMBEDDING_DIM
 
 
 class Dinov3Embedder:
-    def __init__(self, device: str = None):
+    def __init__(
+        self,
+        device: str = None,
+        model_name: str = None,
+        local_files_only: bool = False,
+    ):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
 
-        self.processor = AutoImageProcessor.from_pretrained(DINOV3_MODEL_NAME)
-        self.model = AutoModel.from_pretrained(DINOV3_MODEL_NAME)
+        name = model_name or DINOV3_MODEL_NAME
+        self.processor = AutoImageProcessor.from_pretrained(
+            name, local_files_only=local_files_only
+        )
+        self.model = AutoModel.from_pretrained(
+            name, local_files_only=local_files_only
+        )
         self.model = self.model.to(self.device)
         self.model.eval()
 

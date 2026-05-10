@@ -13,11 +13,17 @@ class RAGSystem:
         index_dir: str = INDEX_DIR,
         embedder_device: str = None,
         top_k: int = DEFAULT_TOP_K,
+        embedder_model_name: str = None,
+        embedder_local_files_only: bool = False,
     ):
         self.index_dir = index_dir
         self.top_k = top_k
 
-        self.embedder = Dinov3Embedder(device=embedder_device)
+        self.embedder = Dinov3Embedder(
+            device=embedder_device,
+            model_name=embedder_model_name,
+            local_files_only=embedder_local_files_only,
+        )
         self.indexer = FaissIndexer(index_dir=index_dir)
         self.file_manager = FileManager(index_dir=index_dir)
 
