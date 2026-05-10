@@ -13,6 +13,7 @@
 
 - `rag/`：检索系统实现（embedding、索引、mask 元数据存储、数据集导入）
 - `seg_pipeline/`：分割流水线（输入校验、RAG 对接、SAM3 适配、输出落盘）
+- `scripts/`：辅助脚本（SAM3 权重下载等）
 - `resource/sam3/`：SAM3 源码与文档（上游工程内置）
 - `resource/dinov3/`、`resource/faiss/`：上游依赖源码（供参考/对照）
 - `segment.md`：分割需求说明
@@ -126,7 +127,19 @@ SAM3 在单张图片模式下默认不会启用记忆注意力。`seg_pipeline` 
 - 根目录 `requirements.txt`：分割流水线 + SAM3 基础依赖 + 引用 `rag/requirements.txt`
 - `rag/requirements.txt`：RAG 侧依赖（torch/transformers/faiss/Pillow 等）
 
-说明：本仓库同时包含上游源码（`resource/sam3` 等），可按需要选择“源码引用”或“pip 安装”方式使用；当前 `seg_pipeline` 默认在导入失败时将 `resource/sam3` 临时加入 `sys.path` 以便直接使用本地源码。
+说明：本仓库同时包含上游源码（`resource/sam3` 等），可按需要选择”源码引用”或”pip 安装”方式使用；当前 `seg_pipeline` 默认在导入失败时将 `resource/sam3` 临时加入 `sys.path` 以便直接使用本地源码。
+
+### SAM3 权重下载
+
+已登录 HuggingFace 且通过 Meta 授权后，使用项目提供的脚本下载：
+
+```bash
+python scripts/download_sam3_weights.py              # 默认 sam3.1 → ./sam3_weights/
+python scripts/download_sam3_weights.py --version sam3  # sam3 版本
+python scripts/download_sam3_weights.py -o /path/to/weights  # 自定义输出目录
+```
+
+脚本会下载对应版本的 `config.json` 和模型权重文件，并在末尾输出可直接填入 `Sam3BuildConfig(checkpoint_path=...)` 的路径。
 
 ## 测试（静态验证）
 
