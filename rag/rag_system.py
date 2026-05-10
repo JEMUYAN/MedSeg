@@ -117,6 +117,19 @@ class RAGSystem:
     def get_indexed_count(self) -> int:
         return len(self.indexer)
 
+    def import_dataset(self, format: str, dataset_path: str, **kwargs) -> int:
+        from rag.dataset_importers import get_importer
+
+        importer = get_importer(format)
+        pairs = importer.discover_pairs(dataset_path, **kwargs)
+
+        if not pairs:
+            return 0
+
+        image_paths, mask_paths = zip(*pairs)
+        self.index_images(list(image_paths), list(mask_paths))
+        return len(image_paths)
+
     def clear_index(self):
         self.file_manager._image_to_mask = {}
         self.file_manager._mask_to_image = {}

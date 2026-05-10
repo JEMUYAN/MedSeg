@@ -11,7 +11,7 @@
 
 ## 目录结构
 
-- `rag/`：检索系统实现（embedding、索引、mask 元数据存储）
+- `rag/`：检索系统实现（embedding、索引、mask 元数据存储、数据集导入）
 - `seg_pipeline/`：分割流水线（输入校验、RAG 对接、SAM3 适配、输出落盘）
 - `resource/sam3/`：SAM3 源码与文档（上游工程内置）
 - `resource/dinov3/`、`resource/faiss/`：上游依赖源码（供参考/对照）
@@ -30,6 +30,54 @@
   - `mask_path` 可能为空字符串（未配置对应 mask）
 
 RAG 也提供索引维护接口：`index_images` / `add_image` / `remove_image` / `clear_index`。
+
+#### 数据集导入（`rag.dataset_importers`）
+
+支持从通用视觉分割数据集格式直接导入图像-掩码对，无需手动逐条添加。
+
+**支持格式：**
+
+| 格式 | 标识符 | 输入 | 说明 |
+|------|--------|------|------|
+| COCO JSON | `"coco"` | 标注 JSON 文件路径 | 支持 polygon / 非压缩 RLE / 压缩 RLE 三种分割标注，可选类别过滤 |
+| Pascal VOC | `"voc"` | 数据集根目录 | 从 ImageSets 或 SegmentationClass 反向配对，支持按类别 ID/名称提取 |
+
+**RAGSystem 集成：**
+
+```python
+from rag import RAGSystem
+
+rag = RAGSystem()
+rag.import_dataset("coco", "/path/to/annotations/instances.json",
+                   image_dir="/path/to/images/",
+                   category_ids=[1, 3])           # 可选：仅导入指定类别
+rag.import_dataset("voc", "/path/to/VOC2012/",
+                   class_name="cat")               # 可选：仅提取指定类别
+```
+
+**独立使用 importer：**
+
+```python
+from rag.dataset_importers import get_importer, list_formats
+
+print(list_formats())  # ["coco", "voc"]
+
+importer = get_importer("coco")
+pairs = importer.discover_pairs("annotations.json", image_dir="images/")
+# 返回 [(image_abs_path, mask_abs_path), ...]
+```
+
+**注册自定义格式：**
+
+```python
+from rag.dataset_importers import register_importer, DatasetImporter
+
+class CityscapesImporter(DatasetImporter):
+    def discover_pairs(self, dataset_path, **kwargs):
+        ...  # 返回 [(image_path, mask_path), ...]
+
+register_importer("cityscapes", CityscapesImporter)
+```
 
 ### 分割流水线：segment_image
 
