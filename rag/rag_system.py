@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import List, Tuple, Optional
 
@@ -5,6 +6,8 @@ from rag.config import INDEX_DIR, DEFAULT_TOP_K
 from rag.embedding.dinov3_embedder import Dinov3Embedder
 from rag.index.faiss_indexer import FaissIndexer
 from rag.storage.file_manager import FileManager
+
+logger = logging.getLogger(__name__)
 
 
 class RAGSystem:
@@ -24,10 +27,21 @@ class RAGSystem:
             model_name=embedder_model_name,
             local_files_only=embedder_local_files_only,
         )
-        self.indexer = FaissIndexer(index_dir=index_dir)
+        self.indexer = FaissIndexer(
+            index_dir=index_dir,
+            embedding_dim=self.embedder.embedding_dim,
+        )
         self.file_manager = FileManager(index_dir=index_dir)
 
-        self.indexer.load()
+        loaded = self.indexer.load()
+        if loaded and self.indexer.embedding_dim != self.embedder.embedding_dim:
+            logger.warning(
+                "已存在的 FAISS 索引维度 (%d) 与当前 embedder (%d) 不匹配，将重建索引",
+                self.indexer.embedding_dim,
+                self.embedder.embedding_dim,
+            )
+            self.indexer.create_index()
+            self.indexer.save()
 
     def index_images(self, image_paths: List[str], mask_paths: List[str] = None):
         if mask_paths is None:

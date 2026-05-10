@@ -5,7 +5,7 @@ from transformers import AutoImageProcessor, AutoModel
 from typing import Union, List
 import torch.nn.functional as F
 
-from rag.config import DINOV3_MODEL_NAME, EMBEDDING_DIM
+from rag.config import DINOV3_MODEL_NAME
 
 
 class Dinov3Embedder:
@@ -29,6 +29,8 @@ class Dinov3Embedder:
         self.model = self.model.to(self.device)
         self.model.eval()
 
+        self.embedding_dim = self.model.config.hidden_size
+
     def extract_embedding(self, image: Union[str, Image.Image]) -> np.ndarray:
         if isinstance(image, str):
             image = Image.open(image).convert("RGB")
@@ -46,7 +48,7 @@ class Dinov3Embedder:
 
     def extract_embeddings(self, images: List[Union[str, Image.Image]]) -> np.ndarray:
         if not images:
-            return np.array([], dtype=np.float32).reshape(0, EMBEDDING_DIM)
+            return np.array([], dtype=np.float32).reshape(0, self.embedding_dim)
 
         pil_images = []
         for img in images:
