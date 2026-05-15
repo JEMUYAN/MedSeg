@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-DINOV3_MODEL_NAME = "facebook/dinov3-vitl16"
+DINOV3_MODEL_NAME = "facebook/dinov3-vith16plus"
 
 INDEX_DIR = os.environ.get("RAG_INDEX_DIR", "./rag_index")
 INDEX_FILE = "faiss_index.bin"

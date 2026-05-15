@@ -44,6 +44,8 @@ class VOCImporter(DatasetImporter):
     def discover_pairs(
         self, dataset_path: str, **kwargs: Any
     ) -> List[Tuple[str, str]]:
+        self.skips.clear()
+
         root = self._resolve_path(dataset_path)
         if not os.path.isdir(root):
             raise NotADirectoryError(f"VOC 数据集根目录不存在: {root}")
@@ -52,6 +54,10 @@ class VOCImporter(DatasetImporter):
         class_id: Optional[int] = kwargs.get("class_id", None)
         image_dir: str = kwargs.get("image_dir", os.path.join(root, self.IMAGE_DIR))
         mask_dir: str = kwargs.get("mask_dir", os.path.join(root, self.MASK_DIR))
+
+        print(f"  root      : {root}")
+        print(f"  image_dir : {image_dir}  (exists={os.path.isdir(image_dir)})")
+        print(f"  mask_dir  : {mask_dir}  (exists={os.path.isdir(mask_dir)})")
 
         if class_name is not None and class_name not in VOC_CLASSES:
             raise ValueError(
@@ -69,15 +75,21 @@ class VOCImporter(DatasetImporter):
 
         sample_ids = self._read_image_set(root)
         if sample_ids:
+            print(f"  ImageSet  : {os.path.join(root, self.IMAGE_SET_FILE)} → {len(sample_ids)} IDs")
             pairs = self._pair_by_ids(
                 sample_ids, image_dir, mask_dir, class_id
             )
         else:
+            mask_files = self._find_files(mask_dir, extensions={".png"}, recursive=False)
+            print(f"  ImageSet  : 未找到，按 mask 文件逆推")
+            print(f"  mask_dir  : {len(mask_files)} 个 .png 文件")
             pairs = self._pair_by_mask_files(
                 image_dir, mask_dir, class_id
             )
 
-        return self._dedup_pairs(pairs)
+        deduped = self._dedup_pairs(pairs)
+        print(f"  result    : {len(pairs)} pairs → {len(deduped)} after dedup, {len(self.skips)} skipped")
+        return deduped
 
     def _read_image_set(self, root: str) -> List[str]:
         set_path = os.path.join(root, self.IMAGE_SET_FILE)
@@ -122,6 +134,8 @@ class VOCImporter(DatasetImporter):
                 mask_path = self._maybe_extract_class_mask(
                     mask_path, target_class_id
                 )
+                if mask_path is None:
+                    continue
 
             pairs.append((img_path, mask_path))
 
@@ -159,6 +173,8 @@ class VOCImporter(DatasetImporter):
                 final_mask_path = self._maybe_extract_class_mask(
                     mask_path, target_class_id
                 )
+                if final_mask_path is None:
+                    continue
 
             pairs.append((img_path, final_mask_path))
 
@@ -174,16 +190,24 @@ class VOCImporter(DatasetImporter):
 
     def _maybe_extract_class_mask(
         self, mask_path: str, class_id: int
-    ) -> str:
+    ) -> Optional[str]:
         stem = Path(mask_path).stem
         class_mask_path = os.path.join(
             os.path.dirname(mask_path), f"{stem}_class{class_id}.png"
         )
         if os.path.exists(class_mask_path):
+            cached = np.array(Image.open(class_mask_path), dtype=np.uint8)
+            if cached.max() == 0:
+                self._log_skip(mask_path, f"已有 class mask 全黑 (class={class_id})，丢弃")
+                os.remove(class_mask_path)
+                return None
             return class_mask_path
 
         mask = self._load_voc_mask(mask_path)
         binary = (mask == class_id).astype(np.uint8) * 255
+        if binary.max() == 0:
+            self._log_skip(mask_path, f"图片不包含目标类别 (class={class_id})")
+            return None
         Image.fromarray(binary, mode="L").save(class_mask_path, format="PNG")
         return class_mask_path
 

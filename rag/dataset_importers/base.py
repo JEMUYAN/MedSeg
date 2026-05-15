@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import logging
+import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -14,6 +15,10 @@ class DatasetImportError(Exception):
 
 
 class DatasetImporter(ABC):
+
+    def __init__(self) -> None:
+        self.skips: List[Tuple[str, str]] = []
+
     @abstractmethod
     def discover_pairs(
         self, dataset_path: str, **kwargs: Any
@@ -55,7 +60,10 @@ class DatasetImporter(ABC):
         return True
 
     def _log_skip(self, image_path: str, reason: str) -> None:
-        logger.warning("跳过 %s: %s", image_path, reason)
+        msg = f"  [SKIP] {image_path}: {reason}"
+        self.skips.append((image_path, reason))
+        logger.warning(msg)
+        print(msg, file=sys.stderr)
 
     def _dedup_pairs(
         self, pairs: List[Tuple[str, str]]

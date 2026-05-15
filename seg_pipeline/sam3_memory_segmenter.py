@@ -12,18 +12,27 @@ from PIL import Image
 from .protocol import RetrievalItem
 
 
-def _ensure_sam3_importable() -> None:
+def _ensure_sam3_importable(sam3_source_path: Optional[str] = None) -> None:
     try:
         import sam3  # noqa: F401
-
         return
     except Exception:
         pass
 
+    if sam3_source_path and Path(sam3_source_path).is_dir():
+        sys.path.insert(0, sam3_source_path)
+        return
+
+    sam3_env = os.environ.get("SAM3_SOURCE_PATH", "")
+    if sam3_env and Path(sam3_env).is_dir():
+        sys.path.insert(0, sam3_env)
+        return
+
     repo_root = Path(__file__).resolve().parents[1]
-    sam3_root = repo_root / "resource" / "sam3"
-    if sam3_root.exists() and sam3_root.is_dir():
-        sys.path.insert(0, str(sam3_root))
+    for p in [repo_root / "resource" / "sam3", repo_root / "seg_pipeline" / "sam3"]:
+        if p.is_dir():
+            sys.path.insert(0, str(p))
+            return
 
 
 @dataclass(frozen=True)
@@ -89,7 +98,6 @@ class Sam3MemoryAttentionSegmenter:
         lock_memory: bool = True,
     ) -> Tuple["Image.Image", Dict[str, Any]]:
         predictor = self.get_predictor()
-        tracker = self._extract_tracker(predictor)
 
         with tempfile.TemporaryDirectory(prefix="sam3_memvid_") as tmpdir:
             frame_dir = Path(tmpdir)
@@ -99,10 +107,20 @@ class Sam3MemoryAttentionSegmenter:
                 query_image_path=query_image_path,
             )
 
-            inference_state = tracker.init_state(
-                video_path=str(frame_dir),
-                async_loading_frames=getattr(self._build_config, "async_loading_frames", True),
-            )
+            async_loading = getattr(self._build_config, "async_loading_frames", True)
+            if self._build_config.version == "sam3":
+                tracker, inference_state = self._init_sam3_tracker_state(
+                    predictor=predictor,
+                    frame_dir=frame_dir,
+                    async_loading_frames=async_loading,
+                )
+            else:
+                tracker = self._extract_tracker(predictor)
+                inference_state = self._init_tracker_state_generic(
+                    tracker=tracker,
+                    frame_dir=frame_dir,
+                    async_loading_frames=async_loading,
+                )
 
             for frame_idx, it in enumerate(retrieval_items):
                 mask_tensor, _mask_meta = self._load_mask_as_torch(it.mask_path)
@@ -167,6 +185,103 @@ class Sam3MemoryAttentionSegmenter:
             }
 
             return out_mask_img, meta
+
+    def _init_tracker_state_generic(
+        self,
+        *,
+        tracker: Any,
+        frame_dir: Path,
+        async_loading_frames: bool,
+    ):
+        import inspect
+
+        sig = inspect.signature(tracker.init_state)
+        params = sig.parameters
+
+        if "video_path" in params:
+            kwargs: Dict[str, Any] = {
+                "video_path": str(frame_dir),
+                "async_loading_frames": async_loading_frames,
+            }
+            if "offload_video_to_cpu" in params:
+                kwargs["offload_video_to_cpu"] = False
+            if "offload_state_to_cpu" in params:
+                kwargs["offload_state_to_cpu"] = False
+            return tracker.init_state(**kwargs)
+
+        if "resource_path" in params:
+            kwargs = {"resource_path": str(frame_dir), "async_loading_frames": async_loading_frames}
+            if "offload_video_to_cpu" in params:
+                kwargs["offload_video_to_cpu"] = False
+            if "offload_state_to_cpu" in params:
+                kwargs["offload_state_to_cpu"] = False
+            return tracker.init_state(**kwargs)
+
+        return tracker.init_state(str(frame_dir), False, False, async_loading_frames=async_loading_frames)
+
+    def _init_sam3_tracker_state(
+        self,
+        *,
+        predictor: Any,
+        frame_dir: Path,
+        async_loading_frames: bool,
+    ) -> Tuple[Any, Dict[str, Any]]:
+        model = getattr(predictor, "model", predictor)
+        tracker = getattr(model, "tracker", None)
+        if tracker is None:
+            raise RuntimeError("sam3 模式下无法从 predictor.model 获取 tracker")
+
+        if not hasattr(model, "init_state"):
+            raise RuntimeError("sam3 模式下 predictor.model 缺少 init_state，无法初始化视频推理状态")
+        if not hasattr(model, "run_backbone_and_detection"):
+            raise RuntimeError("sam3 模式下 predictor.model 缺少 run_backbone_and_detection，无法预缓存特征")
+
+        video_state = model.init_state(
+            resource_path=str(frame_dir),
+            offload_video_to_cpu=False,
+            offload_state_to_cpu=False,
+            async_loading_frames=async_loading_frames,
+        )
+
+        feature_cache = video_state.get("feature_cache")
+        input_batch = video_state.get("input_batch")
+        constants = video_state.get("constants") or {}
+        empty_prompt = constants.get("empty_geometric_prompt")
+        num_frames = int(video_state.get("num_frames"))
+
+        if not isinstance(feature_cache, dict):
+            raise RuntimeError("sam3 模式下 model.init_state 未返回 feature_cache")
+        if input_batch is None:
+            raise RuntimeError("sam3 模式下 model.init_state 未返回 input_batch")
+        if empty_prompt is None:
+            raise RuntimeError("sam3 模式下 model.init_state 未返回 empty_geometric_prompt")
+
+        import torch
+
+        cached_features_all: Dict[int, Any] = {}
+        with torch.no_grad():
+            for frame_idx in range(num_frames):
+                model.run_backbone_and_detection(
+                    frame_idx=frame_idx,
+                    num_frames=num_frames,
+                    input_batch=input_batch,
+                    geometric_prompt=empty_prompt,
+                    feature_cache=feature_cache,
+                    reverse=False,
+                    allow_new_detections=False,
+                )
+                cached = feature_cache.get(frame_idx)
+                if cached is not None:
+                    cached_features_all[frame_idx] = cached
+
+        inference_state = tracker.init_state(
+            cached_features=cached_features_all,
+            video_height=video_state.get("orig_height"),
+            video_width=video_state.get("orig_width"),
+            num_frames=num_frames,
+            offload_state_to_cpu=video_state.get("offload_state_to_cpu", False),
+        )
+        return tracker, inference_state
 
     def _extract_tracker(self, predictor: Any):
         model = getattr(predictor, "model", predictor)
